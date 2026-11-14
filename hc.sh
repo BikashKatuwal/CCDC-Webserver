@@ -1,17 +1,19 @@
 #!/bin/bash
 # hc - health check for the Ubuntu Email server (CCDC)
-# Usage: hc [username]     (default user: testuser1)
+# Usage: hc [username]   (asks for username if not given)
 # The password is typed at the prompt. Never store it in this file.
-# Press Enter at the prompt to skip the login tests.
+# Press Enter at the username prompt to skip the login tests.
 
-U=${1:-testuser1}
+U=$1
+P=
 AD=172.20.240.100
 F=0
 ok() { echo "PASS  $1"; }
 no() { echo "FAIL  $1"; F=$((F+1)); }
 chk() { if "${@:2}" >/dev/null 2>&1; then ok "$1"; else no "$1"; fi; }
 
-read -rsp "Password for $U (Enter to skip logins): " P; echo
+[ -z "$U" ] && read -rp "AD username (Enter to skip logins): " U
+[ -n "$U" ] && { read -rsp "Password for $U: " P; echo; }
 
 echo "--- listening ports"
 for p in 22 25 110 143; do chk "port $p" nc -z -w2 localhost $p; done
@@ -29,11 +31,14 @@ chk "LDAP port 389 on AD" nc -z -w2 $AD 389
 echo "--- protocol checks"
 if { sleep 1; printf 'EHLO hc\r\nQUIT\r\n'; } | nc -w3 localhost 25 | grep -q '^250'; then ok "SMTP EHLO"; else no "SMTP EHLO"; fi
 
+if { sleep 1; printf 'a logout\r\n'; } | nc -w3 localhost 143 | grep -q '^\* OK'; then ok "IMAP banner"; else no "IMAP banner"; fi
+if { sleep 1; printf 'quit\r\n'; } | nc -w3 localhost 110 | grep -q '^+OK'; then ok "POP3 banner"; else no "POP3 banner"; fi
+
 if [ -n "$P" ]; then
   if { sleep 1; printf 'a login "%s" "%s"\r\nb logout\r\n' "$U" "$P"; sleep 1; } | nc -w4 localhost 143 | grep -q '^a OK'; then ok "IMAP login $U"; else no "IMAP login $U"; fi
   if { sleep 1; printf 'user %s\r\n' "$U"; sleep 1; printf 'pass %s\r\n' "$P"; sleep 1; printf 'quit\r\n'; } | nc -w5 localhost 110 | grep -q 'Logged in'; then ok "POP3 login $U"; else no "POP3 login $U"; fi
 else
-  echo "SKIP  IMAP/POP3 login (no password given)"
+  echo "SKIP  IMAP/POP3 login (no username given)"
 fi
 
 echo "--- disk"
